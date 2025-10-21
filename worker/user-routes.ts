@@ -1,21 +1,27 @@
 import { Hono } from "hono";
-import type { Env } from './core-utils';
 import { ClientEntity, PropertyEntity, TransactionEntity, ContractEntity } from "./entities";
-import { ok, bad, notFound } from './core-utils';
 import { z } from 'zod';
+
+type ApiResponse<T = unknown> = { success: boolean; data?: T; error?: string };
+
+const ok = <T>(c: any, data: T) => c.json({ success: true, data } as ApiResponse<T>);
+const bad = (c: any, error: string) => c.json({ success: false, error } as ApiResponse, 400);
+const notFound = (c: any, error = 'not found') => c.json({ success: false, error } as ApiResponse, 404);
+
 const getPagination = (c: any) => {
   const cq = c.req.query('cursor');
   const lq = c.req.query('limit');
   const limit = lq ? Math.max(1, Math.min(100, Number(lq) | 0)) : 20;
   return { cursor: cq ?? null, limit };
 };
-// Schemas for validation
+
 const clientSchema = z.object({
   name: z.string().min(2),
   email: z.string().email(),
   phone: z.string().min(10),
   status: z.enum(['Lead', 'Active', 'Inactive']),
 });
+
 const propertySchema = z.object({
   name: z.string().min(5),
   address: z.string().min(10),
@@ -26,6 +32,7 @@ const propertySchema = z.object({
   bathrooms: z.coerce.number().int().min(0),
   sqft: z.coerce.number().int().positive(),
 });
+
 const transactionSchema = z.object({
   date: z.string().datetime(),
   description: z.string().min(3),
@@ -33,6 +40,7 @@ const transactionSchema = z.object({
   amount: z.coerce.number(),
   type: z.enum(['Income', 'Expense']),
 });
+
 const contractSchema = z.object({
   propertyId: z.string().min(1),
   clientId: z.string().min(1),
@@ -41,145 +49,256 @@ const contractSchema = z.object({
   amount: z.coerce.number().positive(),
   signingDate: z.string().datetime().optional(),
 });
-export function userRoutes(app: Hono<{ Bindings: Env }>) {
-  // --- CLIENTS API ---
-  const clientApi = new Hono<{ Bindings: Env }>();
+
+export function userRoutes(app: Hono) {
+  const clientApi = new Hono();
+
   clientApi.get('/', async (c) => {
-    await ClientEntity.ensureSeed(c.env);
-    const { cursor, limit } = getPagination(c);
-    const page = await ClientEntity.list(c.env, cursor, limit);
-    return ok(c, page);
+    try {
+      await ClientEntity.ensureSeed();
+      const { cursor, limit } = getPagination(c);
+      const page = await ClientEntity.list(cursor, limit);
+      return ok(c, page);
+    } catch (error) {
+      console.error('Client list error:', error);
+      return bad(c, error instanceof Error ? error.message : 'Failed to list clients');
+    }
   });
+
   clientApi.post('/', async (c) => {
-    const body = await c.req.json();
-    const parsed = clientSchema.safeParse(body);
-    if (!parsed.success) return bad(c, parsed.error.toString());
-    const client = await ClientEntity.create(c.env, {
-      id: crypto.randomUUID(),
-      ...parsed.data,
-      lastContacted: new Date().toISOString(),
-    });
-    return ok(c, client);
+    try {
+      const body = await c.req.json();
+      const parsed = clientSchema.safeParse(body);
+      if (!parsed.success) return bad(c, parsed.error.toString());
+
+      const client = await ClientEntity.create({
+        ...parsed.data,
+        lastContacted: new Date().toISOString(),
+      });
+      return ok(c, client);
+    } catch (error) {
+      console.error('Client create error:', error);
+      return bad(c, error instanceof Error ? error.message : 'Failed to create client');
+    }
   });
+
   clientApi.get('/:id', async (c) => {
-    const { id } = c.req.param();
-    const client = new ClientEntity(c.env, id);
-    if (!(await client.exists())) return notFound(c);
-    return ok(c, await client.getState());
+    try {
+      const { id } = c.req.param();
+      const client = await ClientEntity.get(id);
+      if (!client) return notFound(c);
+      return ok(c, client);
+    } catch (error) {
+      console.error('Client get error:', error);
+      return bad(c, error instanceof Error ? error.message : 'Failed to get client');
+    }
   });
+
   clientApi.put('/:id', async (c) => {
-    const { id } = c.req.param();
-    const body = await c.req.json();
-    const parsed = clientSchema.partial().safeParse(body);
-    if (!parsed.success) return bad(c, parsed.error.toString());
-    const client = new ClientEntity(c.env, id);
-    if (!(await client.exists())) return notFound(c);
-    await client.patch(parsed.data);
-    return ok(c, await client.getState());
+    try {
+      const { id } = c.req.param();
+      const body = await c.req.json();
+      const parsed = clientSchema.partial().safeParse(body);
+      if (!parsed.success) return bad(c, parsed.error.toString());
+
+      const client = await ClientEntity.update(id, parsed.data);
+      return ok(c, client);
+    } catch (error) {
+      console.error('Client update error:', error);
+      return bad(c, error instanceof Error ? error.message : 'Failed to update client');
+    }
   });
+
   clientApi.delete('/:id', async (c) => {
-    const { id } = c.req.param();
-    const deleted = await ClientEntity.delete(c.env, id);
-    return ok(c, { id, deleted });
+    try {
+      const { id } = c.req.param();
+      const deleted = await ClientEntity.delete(id);
+      return ok(c, { id, deleted });
+    } catch (error) {
+      console.error('Client delete error:', error);
+      return bad(c, error instanceof Error ? error.message : 'Failed to delete client');
+    }
   });
+
   app.route('/api/clients', clientApi);
-  // --- PROPERTIES API ---
-  const propertyApi = new Hono<{ Bindings: Env }>();
+
+  const propertyApi = new Hono();
+
   propertyApi.get('/', async (c) => {
-    await PropertyEntity.ensureSeed(c.env);
-    const { cursor, limit } = getPagination(c);
-    const page = await PropertyEntity.list(c.env, cursor, limit);
-    return ok(c, page);
+    try {
+      await PropertyEntity.ensureSeed();
+      const { cursor, limit } = getPagination(c);
+      const page = await PropertyEntity.list(cursor, limit);
+      return ok(c, page);
+    } catch (error) {
+      console.error('Property list error:', error);
+      return bad(c, error instanceof Error ? error.message : 'Failed to list properties');
+    }
   });
+
   propertyApi.post('/', async (c) => {
-    const body = await c.req.json();
-    const parsed = propertySchema.safeParse(body);
-    if (!parsed.success) return bad(c, parsed.error.toString());
-    const property = await PropertyEntity.create(c.env, { id: crypto.randomUUID(), ...parsed.data });
-    return ok(c, property);
+    try {
+      const body = await c.req.json();
+      const parsed = propertySchema.safeParse(body);
+      if (!parsed.success) return bad(c, parsed.error.toString());
+
+      const property = await PropertyEntity.create(parsed.data);
+      return ok(c, property);
+    } catch (error) {
+      console.error('Property create error:', error);
+      return bad(c, error instanceof Error ? error.message : 'Failed to create property');
+    }
   });
+
   propertyApi.get('/:id', async (c) => {
-    const { id } = c.req.param();
-    const property = new PropertyEntity(c.env, id);
-    if (!(await property.exists())) return notFound(c);
-    return ok(c, await property.getState());
+    try {
+      const { id } = c.req.param();
+      const property = await PropertyEntity.get(id);
+      if (!property) return notFound(c);
+      return ok(c, property);
+    } catch (error) {
+      console.error('Property get error:', error);
+      return bad(c, error instanceof Error ? error.message : 'Failed to get property');
+    }
   });
+
   propertyApi.put('/:id', async (c) => {
-    const { id } = c.req.param();
-    const body = await c.req.json();
-    const parsed = propertySchema.partial().safeParse(body);
-    if (!parsed.success) return bad(c, parsed.error.toString());
-    const property = new PropertyEntity(c.env, id);
-    if (!(await property.exists())) return notFound(c);
-    await property.patch(parsed.data);
-    return ok(c, await property.getState());
+    try {
+      const { id } = c.req.param();
+      const body = await c.req.json();
+      const parsed = propertySchema.partial().safeParse(body);
+      if (!parsed.success) return bad(c, parsed.error.toString());
+
+      const property = await PropertyEntity.update(id, parsed.data);
+      return ok(c, property);
+    } catch (error) {
+      console.error('Property update error:', error);
+      return bad(c, error instanceof Error ? error.message : 'Failed to update property');
+    }
   });
+
   propertyApi.delete('/:id', async (c) => {
-    const { id } = c.req.param();
-    const deleted = await PropertyEntity.delete(c.env, id);
-    return ok(c, { id, deleted });
+    try {
+      const { id } = c.req.param();
+      const deleted = await PropertyEntity.delete(id);
+      return ok(c, { id, deleted });
+    } catch (error) {
+      console.error('Property delete error:', error);
+      return bad(c, error instanceof Error ? error.message : 'Failed to delete property');
+    }
   });
+
   app.route('/api/properties', propertyApi);
-  // --- TRANSACTIONS API ---
-  const transactionApi = new Hono<{ Bindings: Env }>();
+
+  const transactionApi = new Hono();
+
   transactionApi.get('/', async (c) => {
-    await TransactionEntity.ensureSeed(c.env);
-    const { cursor, limit } = getPagination(c);
-    const page = await TransactionEntity.list(c.env, cursor, limit);
-    return ok(c, page);
+    try {
+      await TransactionEntity.ensureSeed();
+      const { cursor, limit } = getPagination(c);
+      const page = await TransactionEntity.list(cursor, limit);
+      return ok(c, page);
+    } catch (error) {
+      console.error('Transaction list error:', error);
+      return bad(c, error instanceof Error ? error.message : 'Failed to list transactions');
+    }
   });
+
   transactionApi.post('/', async (c) => {
-    const body = await c.req.json();
-    const parsed = transactionSchema.safeParse(body);
-    if (!parsed.success) return bad(c, parsed.error.toString());
-    const transaction = await TransactionEntity.create(c.env, { id: crypto.randomUUID(), ...parsed.data });
-    return ok(c, transaction);
+    try {
+      const body = await c.req.json();
+      const parsed = transactionSchema.safeParse(body);
+      if (!parsed.success) return bad(c, parsed.error.toString());
+
+      const transaction = await TransactionEntity.create(parsed.data);
+      return ok(c, transaction);
+    } catch (error) {
+      console.error('Transaction create error:', error);
+      return bad(c, error instanceof Error ? error.message : 'Failed to create transaction');
+    }
   });
+
   transactionApi.put('/:id', async (c) => {
-    const { id } = c.req.param();
-    const body = await c.req.json();
-    const parsed = transactionSchema.partial().safeParse(body);
-    if (!parsed.success) return bad(c, parsed.error.toString());
-    const transaction = new TransactionEntity(c.env, id);
-    if (!(await transaction.exists())) return notFound(c);
-    await transaction.patch(parsed.data);
-    return ok(c, await transaction.getState());
+    try {
+      const { id } = c.req.param();
+      const body = await c.req.json();
+      const parsed = transactionSchema.partial().safeParse(body);
+      if (!parsed.success) return bad(c, parsed.error.toString());
+
+      const transaction = await TransactionEntity.update(id, parsed.data);
+      return ok(c, transaction);
+    } catch (error) {
+      console.error('Transaction update error:', error);
+      return bad(c, error instanceof Error ? error.message : 'Failed to update transaction');
+    }
   });
+
   transactionApi.delete('/:id', async (c) => {
-    const { id } = c.req.param();
-    const deleted = await TransactionEntity.delete(c.env, id);
-    return ok(c, { id, deleted });
+    try {
+      const { id } = c.req.param();
+      const deleted = await TransactionEntity.delete(id);
+      return ok(c, { id, deleted });
+    } catch (error) {
+      console.error('Transaction delete error:', error);
+      return bad(c, error instanceof Error ? error.message : 'Failed to delete transaction');
+    }
   });
+
   app.route('/api/transactions', transactionApi);
-  // --- CONTRACTS API ---
-  const contractApi = new Hono<{ Bindings: Env }>();
+
+  const contractApi = new Hono();
+
   contractApi.get('/', async (c) => {
-    await ContractEntity.ensureSeed(c.env);
-    const { cursor, limit } = getPagination(c);
-    const page = await ContractEntity.list(c.env, cursor, limit);
-    return ok(c, page);
+    try {
+      await ContractEntity.ensureSeed();
+      const { cursor, limit } = getPagination(c);
+      const page = await ContractEntity.list(cursor, limit);
+      return ok(c, page);
+    } catch (error) {
+      console.error('Contract list error:', error);
+      return bad(c, error instanceof Error ? error.message : 'Failed to list contracts');
+    }
   });
+
   contractApi.post('/', async (c) => {
-    const body = await c.req.json();
-    const parsed = contractSchema.safeParse(body);
-    if (!parsed.success) return bad(c, parsed.error.toString());
-    const contract = await ContractEntity.create(c.env, { id: crypto.randomUUID(), ...parsed.data });
-    return ok(c, contract);
+    try {
+      const body = await c.req.json();
+      const parsed = contractSchema.safeParse(body);
+      if (!parsed.success) return bad(c, parsed.error.toString());
+
+      const contract = await ContractEntity.create(parsed.data);
+      return ok(c, contract);
+    } catch (error) {
+      console.error('Contract create error:', error);
+      return bad(c, error instanceof Error ? error.message : 'Failed to create contract');
+    }
   });
+
   contractApi.put('/:id', async (c) => {
-    const { id } = c.req.param();
-    const body = await c.req.json();
-    const parsed = contractSchema.partial().safeParse(body);
-    if (!parsed.success) return bad(c, parsed.error.toString());
-    const contract = new ContractEntity(c.env, id);
-    if (!(await contract.exists())) return notFound(c);
-    await contract.patch(parsed.data);
-    return ok(c, await contract.getState());
+    try {
+      const { id } = c.req.param();
+      const body = await c.req.json();
+      const parsed = contractSchema.partial().safeParse(body);
+      if (!parsed.success) return bad(c, parsed.error.toString());
+
+      const contract = await ContractEntity.update(id, parsed.data);
+      return ok(c, contract);
+    } catch (error) {
+      console.error('Contract update error:', error);
+      return bad(c, error instanceof Error ? error.message : 'Failed to update contract');
+    }
   });
+
   contractApi.delete('/:id', async (c) => {
-    const { id } = c.req.param();
-    const deleted = await ContractEntity.delete(c.env, id);
-    return ok(c, { id, deleted });
+    try {
+      const { id } = c.req.param();
+      const deleted = await ContractEntity.delete(id);
+      return ok(c, { id, deleted });
+    } catch (error) {
+      console.error('Contract delete error:', error);
+      return bad(c, error instanceof Error ? error.message : 'Failed to delete contract');
+    }
   });
+
   app.route('/api/contracts', contractApi);
 }

@@ -2,8 +2,11 @@
 	"extends": "./tsconfig.node.json",
 	"compilerOptions": {
 		"tsBuildInfoFile": "./node_modules/.tmp/tsconfig.worker.tsbuildinfo",
-		"types": ["@cloudflare/workers-types", "vite/client"],
-		"lib": ["ES2023", "WebWorker", "ESNext.Intl"]
+		"types": ["node", "vite/client"],
+		"lib": ["ES2023", "ESNext.Intl"],
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"target": "ES2022"
 	},
 	"include": ["worker"]
 }
