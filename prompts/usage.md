@@ -21,8 +21,6 @@ Cloudflare Workers + React. Storage via a single Durable Object (DO) wrapped to 
 - **Components**: Use existing ShadCN components instead of writing custom ones
 - **Icons**: Import from `lucide-react` directly
 - **Error Handling**: ErrorBoundary components are pre-implemented
-- **Worker Patterns**: Follow exact patterns in `worker/index.ts` to avoid breaking functionality
-- **CRITICAL**: You CANNOT modify `wrangler.jsonc` - only use the single `GlobalDurableObject` binding
 
 ## Styling
 - Responsive, accessible
